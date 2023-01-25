@@ -30,3 +30,4 @@ kernel-modules/.mycelium.mod.cmd
 user-app/test_app
 user-app/fungi
 user-app/hrib
+kernel-modules/.mycelium.o.d
