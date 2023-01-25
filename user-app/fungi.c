@@ -26,6 +26,27 @@ struct msghdr msg;
 
 long long meas_start, meas_end;
 
+void translateSignalName(netlinksigid_n id ,char* name) {
+    switch (id) {
+        case NLSIG_SPEED:
+            strcpy(name, "SPEED");
+        break;
+        case NLSIG_CHARGE:
+            strcpy(name, "CHARGE");
+        break;
+        case NLSIG_RANGE:
+            strcpy(name, "RANGE");
+        break;
+        case NLSIG_INREVERSE:
+            strcpy(name, "INREVERSE");
+        break;
+        default :
+            strcpy(name, "-unknown-");
+        break;
+    }
+}
+
+
 long long current_timestamp() {
     struct timeval te; 
     gettimeofday(&te, NULL); // get current time
@@ -66,6 +87,7 @@ void *recv_thread(void *arg)
     while (1)
     {
         uint32_t mtype;
+        char namebuf[24];
         /* receive the message */
         len = recvmsg(sock_fd, &msg, 0);
         if (len < 0)
@@ -78,24 +100,28 @@ void *recv_thread(void *arg)
         /*should be same as reading nlh->nlmsg_type */
         mtype = ((struct nlmsghdr *)msg.msg_iov->iov_base)->nlmsg_type;
         
-        printf("\nRX msg; Type: 0x%02X\n", mtype);
+        printf("\nRX msg; Type: 0x%02X \n", mtype);
         
         /* process the message */
         switch (mtype) {
           case NLMSG_CANSIG_FLOAT:
-            printf("-- SigID: 0x%02X / type float / value: %.3f\n", nlSigPayld->sigid, nlSigPayld->value.f );
+            translateSignalName(nlSigPayld->sigid, namebuf);
+            printf("-- SigID: 0x%02X / %s -- float / value: %.3f\n", nlSigPayld->sigid, namebuf, nlSigPayld->value.f );
             break;
            
           case NLMSG_CANSIG_INT32:
-            printf("-- SigID: 0x%02X / type int32 / value: %d\n", nlSigPayld->sigid, nlSigPayld->value.i );
+            translateSignalName(nlSigPayld->sigid, namebuf);
+            printf("-- SigID: 0x%02X / %s -- int32 / value: %d\n", nlSigPayld->sigid, namebuf, nlSigPayld->value.i );
             break;
           
           case NLMSG_CANSIG_UINT32:
-            printf("-- SigID: 0x%02X / type uint32 / value: %d\n", nlSigPayld->sigid, nlSigPayld->value.u );
+            translateSignalName(nlSigPayld->sigid, namebuf);
+            printf("-- SigID: 0x%02X / %s -- uint32 / value: %d\n", nlSigPayld->sigid, namebuf, nlSigPayld->value.u );
             break;
         
           case NLMSG_CANSIG_BOOL:
-            printf("-- SigID: 0x%02X / type bool / value: %s\n", nlSigPayld->sigid, (nlSigPayld->value.b == true) ? "true" : "false" );
+            translateSignalName(nlSigPayld->sigid, namebuf);
+            printf("-- SigID: 0x%02X / %s -- bool / value: %s\n", nlSigPayld->sigid, namebuf, (nlSigPayld->value.b == true) ? "true" : "false" );
             break;
           
           case NLMSG_SIG_COMMAND:
