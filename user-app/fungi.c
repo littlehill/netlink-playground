@@ -10,6 +10,8 @@
 
 #include <sys/time.h>
 
+#include "../kernel-modules/mycelium.h"
+
 #define REPEAT_COUNT 10000
 
 #define NETLINK_USER 29
@@ -34,6 +36,7 @@ long long current_timestamp() {
 /* thread function to receive messages */
 void *recv_thread(void *arg)
 {
+    /*netlink related*/
     struct sockaddr_nl src_addr;
     struct nlmsghdr *nlh;
     struct iovec iov;
@@ -41,36 +44,85 @@ void *recv_thread(void *arg)
     int len;
     int exitflag = 0;
 
+    /*custom protocol 29 related*/
+    nlSignalPayload_t *nlSigPayld;
+    nlCmdPayload_t *nlCmdPayld;
+
     nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
     memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
 
     iov.iov_base = (void *)nlh;
     iov.iov_len = NLMSG_SPACE(MAX_PAYLOAD);
 
-    msg.msg_name = (void *)&src_addr;
-    msg.msg_namelen = sizeof(src_addr);
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
 
     while (1)
     {
+        u_int32_t mtype;
         /* receive the message */
         len = recvmsg(sock_fd, &msg, 0);
         if (len < 0)
         {
             perror("recvmsg");
+            free(nlh); //just to be sure, exit() should mem. release anyway
             exit(EXIT_FAILURE);
         }
 
-        /* process the message */
-        printf("Received message: %s\n", (char *)NLMSG_DATA(nlh));
+        /*should be same as reading nlh->nlmsg_type */
+        mtype = ((struct nlmsghdr *)msg.msg_iov->iov_base)->nlmsg_type;
+        nlSigPayld = (nlSignalPayload_t *)NLMSG_DATA(nlh);
+        nlCmdPayld = (nlCmdPayload_t *)NLMSG_DATA(nlh);
 
-        /* should we exit ? */
-        exitflag = strcmp((char *)NLMSG_DATA(nlh), "EXITFLAG");
-        if (!exitflag)
-        {
-            printf("EXIT msg received\n");
+        
+        printf("\nRX msg; Type: 0x%02X\n", mtype);
+        
+        /* process the message */
+        switch (mtype) {
+          case NLMSG_CANSIG_FLOAT:
+            printf("-- SigID: 0x%02X / type float / value: %.3f\n", nlSigPayld->sigid, nlSigPayld->value.f );
             break;
+           
+          case NLMSG_CANSIG_INT32:
+            printf("-- SigID: 0x%02X / type int32 / value: %d\n", nlSigPayld->sigid, nlSigPayld->value.i );
+            break;
+          
+          case NLMSG_CANSIG_UINT32:
+            printf("-- SigID: 0x%02X / type uint32 / value: %d\n", nlSigPayld->sigid, nlSigPayld->value.u );
+            break;
+        
+          case NLMSG_CANSIG_BOOL:
+            printf("-- SigID: 0x%02X / type bool / value: %s\n", nlSigPayld->sigid, (nlSigPayld->value.b == true) ? "true" : "false" );
+            break;
+          
+          case NLMSG_SIG_COMMAND:
+            printf("-- CmdID: 0x%02X / type command (generic)\n", nlCmdPayld->cmdid);
+            if (nlCmdPayld->cmdid == NLCMD_LINK_EXIT) {
+                exitflag = true;
+            }
+            break;
+        
+          case NLMSG_HMI_REGPID:
+            printf("-- mtype HMI REGPID --\n");
+            break;
+          case NLMSG_HMI_RESETPID:
+            printf("-- mtype HMI RESETPID --\n");
+            break;
+          case NLMSG_HMI_REQUEST:
+            printf("-- mtype HMI REQUEST --\n");
+            break;
+
+          default:
+            printf("-- unknown message type 0x%02X-- payload: %s\n", mtype, (char *)NLMSG_DATA(nlh));
+            break;
+        }
+        
+        /* should we exit ? */
+        if (exitflag)
+        {
+            printf("EXIT command received\n");
+            free(nlh); //just to be sure, exit() should mem. release anyway
+            exit(EXIT_SUCCESS);
         }
     }
 
@@ -79,42 +131,42 @@ void *recv_thread(void *arg)
 
 int main()
 {
-pthread_t recv_thread_id;
-int ptret;
+    pthread_t recv_thread_id;
+    int ptret;
 
-sock_fd=socket(PF_NETLINK, SOCK_RAW, NETLINK_USER);
-if(sock_fd<0)
-return -1;
+    sock_fd=socket(PF_NETLINK, SOCK_RAW, NETLINK_USER);
+    if(sock_fd<0)
+    return -1;
 
-memset(&src_addr, 0, sizeof(src_addr));
-src_addr.nl_family = AF_NETLINK;
-src_addr.nl_pid = getpid(); /* self pid */
+    memset(&src_addr, 0, sizeof(src_addr));
+    src_addr.nl_family = AF_NETLINK;
+    src_addr.nl_pid = getpid(); /* self pid */
 
-bind(sock_fd, (struct sockaddr*)&src_addr, sizeof(src_addr));
+    bind(sock_fd, (struct sockaddr*)&src_addr, sizeof(src_addr));
 
-memset(&dest_addr, 0, sizeof(dest_addr));
-memset(&dest_addr, 0, sizeof(dest_addr));
-dest_addr.nl_family = AF_NETLINK;
-dest_addr.nl_pid = 0; /* For Linux Kernel */
-dest_addr.nl_groups = 0; /* unicast */
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.nl_family = AF_NETLINK;
+    dest_addr.nl_pid = 0; /* For Linux Kernel */
+    dest_addr.nl_groups = 0; /* unicast */
 
-nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
-memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
-nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
-nlh->nlmsg_pid = getpid();
-nlh->nlmsg_flags = 0;
+    nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
+    memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
+    nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
+    nlh->nlmsg_pid = getpid();
+    nlh->nlmsg_flags = 0;
 
-strcpy((char*)NLMSG_DATA(nlh), "Hello-from-APP");
+    strcpy((char*)NLMSG_DATA(nlh), "Hello-from-APP");
 
-iov.iov_base = (void *)nlh;
-iov.iov_len = nlh->nlmsg_len;
-msg.msg_name = (void *)&dest_addr;
-msg.msg_namelen = sizeof(dest_addr);
-msg.msg_iov = &iov;
-msg.msg_iovlen = 1;
+    iov.iov_base = (void *)nlh;
+    iov.iov_len = nlh->nlmsg_len;
+    msg.msg_name = (void *)&dest_addr;
+    msg.msg_namelen = sizeof(dest_addr);
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
 
 
-sendmsg(sock_fd,&msg,0);
+    sendmsg(sock_fd,&msg,0);
 
     /* create the receive thread */
     if (pthread_create(&recv_thread_id, NULL, recv_thread, NULL) != 0)
@@ -141,5 +193,5 @@ sendmsg(sock_fd,&msg,0);
 
     printf("|> pthread joined, exit code: %d\n", ptret);
 
-close(sock_fd);
+    close(sock_fd);
 }
