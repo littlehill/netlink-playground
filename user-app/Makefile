@@ -13,7 +13,7 @@ test_app: test_app.c
 	@echo "$<"
 	@echo "Build Successful" || echo "Build Failed"
 
-fungi: fungi.cpp
+fungi: fungi.c
 	@$(CC) $(CFLAGS) -pthread -o $@ $<
 	@echo "$<"
 	@echo "Build Successful" || echo "Build Failed"

@@ -39,7 +39,7 @@ void *recv_thread(void *arg)
     struct iovec iov;
     struct msghdr msg;
     int len;
-    bool exitflag = false;
+    int exitflag = 0;
 
     nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
     memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
