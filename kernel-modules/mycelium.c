@@ -7,7 +7,7 @@
 
 #include <linux/kthread.h>
 #include <linux/delay.h>
-//#include <linux/kernel.h>
+#include <linux/kernel.h>
 
 #include "mycelium.h"
 

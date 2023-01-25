@@ -10,6 +10,7 @@
 
 #include <sys/time.h>
 
+#include <stdint.h>
 #include "../kernel-modules/mycelium.h"
 
 #define REPEAT_COUNT 10000
@@ -47,6 +48,7 @@ void *recv_thread(void *arg)
     /*custom protocol 29 related*/
     nlSignalPayload_t *nlSigPayld;
     nlCmdPayload_t *nlCmdPayld;
+    nlHmiSyncPayload_t *nlHmiSyncPayld;
 
     nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
     memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
@@ -56,6 +58,10 @@ void *recv_thread(void *arg)
 
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
+
+    nlSigPayld = (nlSignalPayload_t *)NLMSG_DATA(nlh);
+    nlCmdPayld = (nlCmdPayload_t *)NLMSG_DATA(nlh);
+    nlHmiSyncPayld = (nlHmiSyncPayload_t *)NLMSG_DATA(nlh);
 
     while (1)
     {
@@ -71,9 +77,6 @@ void *recv_thread(void *arg)
 
         /*should be same as reading nlh->nlmsg_type */
         mtype = ((struct nlmsghdr *)msg.msg_iov->iov_base)->nlmsg_type;
-        nlSigPayld = (nlSignalPayload_t *)NLMSG_DATA(nlh);
-        nlCmdPayld = (nlCmdPayload_t *)NLMSG_DATA(nlh);
-
         
         printf("\nRX msg; Type: 0x%02X\n", mtype);
         
@@ -102,16 +105,10 @@ void *recv_thread(void *arg)
             }
             break;
         
-          case NLMSG_HMI_REGPID:
-            printf("-- mtype HMI REGPID --\n");
+          case NLMSG_HMI_SYNC:
+            printf("-- mtype NLMSG_HMI_SYNC / ID: 0x%02X  stamp: %d --\n", nlHmiSyncPayld->transferid, nlHmiSyncPayld->stamp);
             break;
-          case NLMSG_HMI_RESETPID:
-            printf("-- mtype HMI RESETPID --\n");
-            break;
-          case NLMSG_HMI_REQUEST:
-            printf("-- mtype HMI REQUEST --\n");
-            break;
-
+          
           default:
             printf("-- unknown message type 0x%02X-- payload: %s\n", mtype, (char *)NLMSG_DATA(nlh));
             break;
