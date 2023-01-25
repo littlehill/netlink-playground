@@ -17,7 +17,7 @@
 
 #define NETLINK_USER 29
 
-#define MAX_PAYLOAD 1024 /* maximum payload size*/
+#define MAX_PAYLOAD 128 /* maximum payload size*/
 struct sockaddr_nl src_addr, dest_addr;
 struct nlmsghdr *nlh = NULL;
 struct iovec iov;
@@ -65,7 +65,7 @@ void *recv_thread(void *arg)
 
     while (1)
     {
-        u_int32_t mtype;
+        uint32_t mtype;
         /* receive the message */
         len = recvmsg(sock_fd, &msg, 0);
         if (len < 0)
@@ -130,6 +130,8 @@ int main()
 {
     pthread_t recv_thread_id;
     int ptret;
+    nlHmiSyncPayload_t sync_payload;
+    int mypid = getpid(); /* self pid */
 
     sock_fd=socket(PF_NETLINK, SOCK_RAW, NETLINK_USER);
     if(sock_fd<0)
@@ -137,11 +139,10 @@ int main()
 
     memset(&src_addr, 0, sizeof(src_addr));
     src_addr.nl_family = AF_NETLINK;
-    src_addr.nl_pid = getpid(); /* self pid */
+    src_addr.nl_pid = mypid;
 
     bind(sock_fd, (struct sockaddr*)&src_addr, sizeof(src_addr));
 
-    memset(&dest_addr, 0, sizeof(dest_addr));
     memset(&dest_addr, 0, sizeof(dest_addr));
     dest_addr.nl_family = AF_NETLINK;
     dest_addr.nl_pid = 0; /* For Linux Kernel */
@@ -149,12 +150,17 @@ int main()
 
     nlh = (struct nlmsghdr *)malloc(NLMSG_SPACE(MAX_PAYLOAD));
     memset(nlh, 0, NLMSG_SPACE(MAX_PAYLOAD));
-    nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
-    nlh->nlmsg_pid = getpid();
+    nlh->nlmsg_type = NLMSG_HMI_SYNC; /*from mycelium.h, request/response type*/
+    nlh->nlmsg_pid = mypid;
     nlh->nlmsg_flags = 0;
+    nlh->nlmsg_len = NLMSG_SPACE(MAX_PAYLOAD);
 
-    strcpy((char*)NLMSG_DATA(nlh), "Hello-from-APP");
+    /*insert the REGPID payload*/
+    sync_payload.transferid = NLHMI_REGPID;
+    sync_payload.stamp = 5; //'random' number - chosen by fair dice roll
+    memcpy((void*)NLMSG_DATA(nlh), (void*)&sync_payload, sizeof(nlHmiSyncPayload_t));
 
+    /*unsure why exactly the example had this in it*/
     iov.iov_base = (void *)nlh;
     iov.iov_len = nlh->nlmsg_len;
     msg.msg_name = (void *)&dest_addr;
@@ -162,7 +168,7 @@ int main()
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
 
-
+    /*transmit*/
     sendmsg(sock_fd,&msg,0);
 
     /* create the receive thread */

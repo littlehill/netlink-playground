@@ -16,6 +16,7 @@ static struct task_struct *thread;
 
 /* to be paired with the hrib.c example*/
 #define NETLINK_USER 29
+#define FAIL_TO_SEND_TRH 4
 
 struct sock *nl_sk = NULL;
 
@@ -30,28 +31,37 @@ static int thread_fn(void *data)
 	struct sk_buff *skb_out;
 	int msg_size, pid;
     int fi, res;
+    int failed_to_send_counter = 0;
+    int fake_speed = 0;
 
 	printk(KERN_INFO "Entering: %s\n", __FUNCTION__);
 
-	char *canmsg = "CANSIM: 0x01 0x02 0x03 0x04 0x05 0x06 0x07 0x08 in string";
-    msg_size = strlen(canmsg);
+	nlSignalPayload_t signal_payload;
 
 	while (!kthread_should_stop()) {
 		printk(KERN_INFO "thread_fn loop %d\n", counter++);
 
-
 		if (app_pid != -1) {
-			skb_out = nlmsg_new(msg_size, 0);
+            msg_size = sizeof(nlSignalPayload_t);
+
+            skb_out = nlmsg_new(msg_size, 0);
 			nlh = nlmsg_put(skb_out, 0, counter, NLMSG_CANSIG_INT32, msg_size, 0);
 			NETLINK_CB(skb_out).dst_group = 0;
 			
-			strcpy((char*)NLMSG_DATA(nlh), "Kernel CAN-msg: 0x0A 0x0B 0x0C 0x0D 0x10 0x20 0x30 0x40");
+			signal_payload.sigid = NLSIG_SPEED;
+            signal_payload.value.i = fake_speed;
+            fake_speed = (fake_speed>400) ? 0 : fake_speed + 10;
 
-			pid = app_pid; /*pid of sending process */
-
-			res = nlmsg_unicast(nl_sk, skb_out, pid);
-			if (res < 0)
-				printk(KERN_INFO "Error while sending msg to user\n");
+            memcpy((void*)NLMSG_DATA(nlh), (void*)&signal_payload, msg_size);
+        
+			res = nlmsg_unicast(nl_sk, skb_out, app_pid);
+			if (res < 0) {
+                printk(KERN_INFO "Error while sending msg to user - %d\n", ++failed_to_send_counter);
+                if (failed_to_send_counter >= FAIL_TO_SEND_TRH) {
+                    app_pid = -1; // unregister existing pid
+                    failed_to_send_counter = 0; // reset counter
+                }
+            }
 		}
 		else {
 			printk(KERN_INFO "User app PID not set\n");
@@ -63,20 +73,50 @@ static int thread_fn(void *data)
 	return 0;
 }
 
-static void hello_nl_recv_msg(struct sk_buff *skb)
+static void mycelium_recv_msg(struct sk_buff *skb)
 {
 	struct nlmsghdr *nlh;
+    uint32_t mtype;
 
-	printk(KERN_INFO "Entering: %s\n", __FUNCTION__);
-	nlh = (struct nlmsghdr *)skb->data;
-
-	if (totaltx_counter == 0 ) {
-		app_pid = nlh->nlmsg_pid;
-		printk(KERN_INFO "First call, pid: %d\n", app_pid);
-	}
+    /*custom protocol 29 related*/
+    nlHmiSyncPayload_t *nlHmiSyncPayld;
 	
-	printk(KERN_INFO "Netlink received msg payload:'%s' // rxcnt: %d\n",
-	       (char *)nlmsg_data(nlh), ++totaltx_counter);
+    nlh = (struct nlmsghdr *)skb->data;
+
+    nlHmiSyncPayld = (nlHmiSyncPayload_t *)nlmsg_data(nlh);
+
+    mtype = nlh->nlmsg_type;
+    printk(KERN_INFO "\nMycelium %s; Type: 0x%02X\n", __FUNCTION__, mtype);
+    
+    /* process the message */
+    switch (mtype) {
+        case NLMSG_CANSIG_FLOAT:
+        case NLMSG_CANSIG_INT32:
+        case NLMSG_CANSIG_UINT32:
+        case NLMSG_CANSIG_BOOL:        
+        case NLMSG_SIG_COMMAND:
+            printk(KERN_INFO "-- unsupported message RX, type: 0x%02X \n", mtype);
+        break;
+    
+        case NLMSG_HMI_SYNC:
+            printk(KERN_INFO "-- mtype NLMSG_HMI_SYNC / ID: 0x%02X  stamp: %d --\n", nlHmiSyncPayld->transferid, nlHmiSyncPayld->stamp);
+            if (nlHmiSyncPayld->transferid == NLHMI_REGPID) {
+                app_pid = nlh->nlmsg_pid;
+                printk(KERN_INFO "App pid registered: %d\n", app_pid);
+            }
+            if (nlHmiSyncPayld->transferid == NLHMI_RESETPID) {
+                app_pid = -1;
+                printk(KERN_INFO "App pid reset.\n");
+            }
+        break;
+        
+        default:
+            /*to cover the example messages sending text over*/
+            printk(KERN_INFO "-- unknown message type 0x%02X-- payload: %s\n", mtype, (char *)NLMSG_DATA(nlh));
+        break;
+    }
+    
+    return;
 }
 
 static int __init hello_init(void)
@@ -84,7 +124,7 @@ static int __init hello_init(void)
 	printk("Entering: %s\n", __FUNCTION__);
 	//This is for 3.6 kernels and above.
 	struct netlink_kernel_cfg cfg = {
-		.input = hello_nl_recv_msg,
+		.input = mycelium_recv_msg,
 	};
 
 	nl_sk = netlink_kernel_create(&init_net, NETLINK_USER, &cfg);
