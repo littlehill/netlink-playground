@@ -13,9 +13,10 @@
 #include <stdint.h>
 #include "../kernel-modules/mycelium.h"
 
-#define REPEAT_COUNT 10000
+#define REPEAT_COUNT 2
 
 #define NETLINK_USER 29
+#define SIG_RPMSG_MASK 0x000000FF
 
 #define MAX_PAYLOAD 128 /* maximum payload size*/
 struct sockaddr_nl src_addr, dest_addr;
@@ -87,6 +88,8 @@ void *recv_thread(void *arg)
     while (1)
     {
         uint32_t mtype;
+        netlinksigid_n local_SigId;
+
         char namebuf[24];
         /* receive the message */
         len = recvmsg(sock_fd, &msg, 0);
@@ -99,46 +102,57 @@ void *recv_thread(void *arg)
 
         /*should be same as reading nlh->nlmsg_type */
         mtype = ((struct nlmsghdr *)msg.msg_iov->iov_base)->nlmsg_type;
+        local_SigId = (netlinksigid_n)(nlSigPayld->sigid & SIG_RPMSG_MASK);
+
+        //printf("\nRX msg; Type: 0x%02X \n", mtype);
         
-        printf("\nRX msg; Type: 0x%02X \n", mtype);
-        
-        /* process the message */
-        switch (mtype) {
-          case NLMSG_CANSIG_FLOAT:
-            translateSignalName(nlSigPayld->sigid, namebuf);
-            printf("-- SigID: 0x%02X / %s -- float / value: %.3f\n", nlSigPayld->sigid, namebuf, nlSigPayld->value.f );
-            break;
-           
-          case NLMSG_CANSIG_INT32:
-            translateSignalName(nlSigPayld->sigid, namebuf);
-            printf("-- SigID: 0x%02X / %s -- int32 / value: %d\n", nlSigPayld->sigid, namebuf, nlSigPayld->value.i );
-            break;
-          
-          case NLMSG_CANSIG_UINT32:
-            translateSignalName(nlSigPayld->sigid, namebuf);
-            printf("-- SigID: 0x%02X / %s -- uint32 / value: %d\n", nlSigPayld->sigid, namebuf, nlSigPayld->value.u );
-            break;
-        
-          case NLMSG_CANSIG_BOOL:
-            translateSignalName(nlSigPayld->sigid, namebuf);
-            printf("-- SigID: 0x%02X / %s -- bool / value: %s\n", nlSigPayld->sigid, namebuf, (nlSigPayld->value.b == true) ? "true" : "false" );
-            break;
-          
-          case NLMSG_SIG_COMMAND:
-            printf("-- CmdID: 0x%02X / type command (generic)\n", nlCmdPayld->cmdid);
-            if (nlCmdPayld->cmdid == NLCMD_LINK_EXIT) {
-                exitflag = true;
+        if (nlSigPayld->value.i >= REPEAT_COUNT) {
+            meas_end = current_timestamp();
+            long long result = meas_end-meas_start;
+            printf("val: %d\n", nlSigPayld->value.i);
+            printf("Sending speed:  %lld[ms] to send %d messages. -> %.4f [ms/message]\n", result, REPEAT_COUNT,  result/((float)REPEAT_COUNT));
             }
-            break;
-        
-          case NLMSG_HMI_SYNC:
-            printf("-- mtype NLMSG_HMI_SYNC / ID: 0x%02X  stamp: %d --\n", nlHmiSyncPayld->transferid, nlHmiSyncPayld->stamp);
-            break;
-          
-          default:
-            printf("-- unknown message type 0x%02X-- payload: %s\n", mtype, (char *)NLMSG_DATA(nlh));
-            break;
+        else {
+            //printf ("count %d\n",nlSigPayld->value.i);
         }
+
+        // /* process the message */
+        // switch (mtype) {
+        //   case NLMSG_CANSIG_FLOAT:
+        //     translateSignalName(local_SigId, namebuf);
+        //     printf("-- SigID: 0x%02X / %s -- float / value: %.3f\n", local_SigId, namebuf, nlSigPayld->value.f );
+        //     break;
+           
+        //   case NLMSG_CANSIG_INT32:
+        //     translateSignalName(local_SigId, namebuf);
+        //     printf("-- SigID: 0x%02X / %s -- int32 / value: %d\n", local_SigId, namebuf, nlSigPayld->value.i );
+        //     break;
+          
+        //   case NLMSG_CANSIG_UINT32:
+        //     translateSignalName(local_SigId, namebuf);
+        //     printf("-- SigID: 0x%02X / %s -- uint32 / value: %d\n", local_SigId, namebuf, nlSigPayld->value.u );
+        //     break;
+        
+        //   case NLMSG_CANSIG_BOOL:
+        //     translateSignalName(local_SigId, namebuf);
+        //     printf("-- SigID: 0x%02X / %s -- bool / value: %s\n", local_SigId, namebuf, (nlSigPayld->value.b == true) ? "true" : "false" );
+        //     break;
+          
+        //   case NLMSG_SIG_COMMAND:
+        //     printf("-- CmdID: 0x%02X / type command (generic)\n", nlCmdPayld->cmdid);
+        //     if (nlCmdPayld->cmdid == NLCMD_LINK_EXIT) {
+        //         exitflag = true;
+        //     }
+        //     break;
+        
+        //   case NLMSG_HMI_SYNC:
+        //     printf("-- mtype NLMSG_HMI_SYNC / ID: 0x%02X  stamp: %d --\n", nlHmiSyncPayld->transferid, nlHmiSyncPayld->stamp);
+        //     break;
+          
+        //   default:
+        //     printf("-- unknown message type 0x%02X-- payload: %s\n", mtype, (char *)NLMSG_DATA(nlh));
+        //     break;
+        // }
         
         /* should we exit ? */
         if (exitflag)
@@ -152,11 +166,21 @@ void *recv_thread(void *arg)
     free(nlh);
 }
 
+// create the function to be executed as a thread
+void *transmit_emulator(void *ptr)
+{
+    int type = (int) ptr;
+    fprintf(stderr,"Thread - %d\n",type);
+    return  ptr;
+}
+
+
 int main()
 {
-    pthread_t recv_thread_id;
+    pthread_t recv_thread_id, tx_thread_id;
     int ptret;
     nlHmiSyncPayload_t sync_payload;
+    nlSignalPayload_t signal_payload;
     int mypid = getpid(); /* self pid */
 
     sock_fd=socket(PF_NETLINK, SOCK_RAW, NETLINK_USER);
@@ -195,7 +219,7 @@ int main()
     msg.msg_iovlen = 1;
 
     /*transmit*/
-    sendmsg(sock_fd,&msg,0);
+    sendmsg(sock_fd,&msg,0); //sync the pid
 
     /* create the receive thread */
     if (pthread_create(&recv_thread_id, NULL, recv_thread, NULL) != 0)
@@ -205,19 +229,27 @@ int main()
         exit(EXIT_FAILURE);
     }
 
+    nlh->nlmsg_type = NLMSG_CANSIG_INT32; /*from mycelium.h, request/response type*/
+    signal_payload.sigid = NLSIG_SPEED;
+    signal_payload.value.i = 0;
+    memcpy((void*)NLMSG_DATA(nlh), (void*)&signal_payload, sizeof(nlSignalPayload_t));
 
-/*  printf("Sending message to kernel %d-X times\n", REPEAT_COUNT);
+  printf("Sending message to kernel %d-X times\n", REPEAT_COUNT);
     meas_start = current_timestamp();
     for (int i=0; i<REPEAT_COUNT; i+=1) {
+        //signal_payload.value.i = (signal_payload.value.i+1)%400;
+        //memcpy((void*)NLMSG_DATA(nlh), (void*)&signal_payload, sizeof(nlSignalPayload_t));
         sendmsg(sock_fd,&msg,0);
     }
-    meas_end = current_timestamp();
+    //meas_end = current_timestamp();
     long long result = meas_end-meas_start;
-    printf("Sending speed:  %lld[ms] to send %d messages. -> %.4f [ms/message]\n", result, REPEAT_COUNT,  result/((float)REPEAT_COUNT));
-*/
+    // moved to RX on 10.000th message
+    //printf("Sending speed:  %lld[ms] to send %d messages. -> %.4f [ms/message]\n", result, REPEAT_COUNT,  result/((float)REPEAT_COUNT));
+
 
     /* wait for the receive thread to exit */
     printf("|> wait for the receive thread to exit\n");
+    ptret = pthread_join(recv_thread_id, NULL);
     ptret = pthread_join(recv_thread_id, NULL);
 
     printf("|> pthread joined, exit code: %d\n", ptret);
