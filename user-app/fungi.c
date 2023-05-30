@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include "../kernel-modules/mycelium.h"
 
-#define REPEAT_COUNT 1000
+#define REPEAT_COUNT 2
 
 #define NETLINK_USER 29
 #define SIG_RPMSG_MASK 0x000000FF
@@ -236,7 +236,6 @@ int main()
 
     /* wait for the receive thread to exit */
     printf("|> wait for the receive thread to exit\n");
-    ptret = pthread_join(recv_thread_id, NULL);
     ptret = pthread_join(recv_thread_id, NULL);
 
     printf("|> pthread joined, exit code: %d\n", ptret);
